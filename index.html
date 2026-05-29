@@ -9,13 +9,7 @@
   function fmt(v){if(typeof v!=='number'||isNaN(v))return '—';return(v>=0?'+':'')+v.toFixed(2)+'%';}
   function clr(v){if(typeof v!=='number')return '#8b949e';return v>0?'#3fb950':v<0?'#f85149':'#8b949e';}
   function set(id,t,c){var e=d.getElementById(id);if(!e)return;e.textContent=t;if(c)e.style.color=c;}
-  function bestPrice(r){
-    if(r.marketState==='PRE'&&r.preMarketPrice)return {p:r.preMarketPrice,session:'pre-market'};
-    if((r.marketState==='POST'||r.marketState==='POSTPOST')&&r.postMarketPrice)return {p:r.postMarketPrice,session:'after-hours'};
-    if(r.regularMarketPrice)return {p:r.regularMarketPrice,session:'regular'};
-    return null;
-  }
-  function apply(pm,session){
+  function applyPrices(pm,label,ts){
     if(!pm)return;
     var unreal=0;
     pos.forEach(function(p){
@@ -32,33 +26,48 @@
     var tot=real+unreal;
     set('live-total-return',fmt(tot),clr(tot));
     set('live-unrealized',fmt(unreal),clr(unreal));
-    var sgt=new Date(new Date().getTime()+8*3600000);
-    var ts=String(sgt.getUTCHours()).padStart(2,'0')+':'+String(sgt.getUTCMinutes()).padStart(2,'0')+' SGT';
-    var label=session&&session!=='regular'?' ('+session+')':'';
     var b=d.getElementById('live-price-badge');
-    if(b){b.textContent='⚡ prices live'+label+' · '+ts;b.style.color='#3fb950';}
+    if(b){b.textContent='⚡ '+ts+(label?' ('+label+')':'');b.style.color='#3fb950';}
   }
-  function go(url,next){
-    fetch(url,{cache:'no-store'})
+  /* --- Primary source: server-pushed prices.json (same-origin, no CORS) --- */
+  function fetchFromJson(fallback){
+    fetch('/claudetradersg/prices.json?_='+Date.now(),{cache:'no-store'})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var age=(Date.now()/1000)-(j.updated_utc||0);
+        if(age>600){fallback();return;}  /* stale >10 min → try Yahoo */
+        var m={};
+        Object.keys(j.prices||{}).forEach(function(sym){m[sym]=(j.prices[sym]||{}).price;});
+        var label=j.session==='PRE'?'pre-market':j.session==='POST'?'after-hours':'';
+        applyPrices(m,label,j.updated_sgt||'live');
+      }).catch(function(){fallback();});
+  }
+  /* --- Fallback: Yahoo Finance direct (works from real browser IPs) --- */
+  function fetchFromYahoo(onFail){
+    var base='https://query1.finance.yahoo.com/v7/finance/quote?symbols='+tickers.join(',');
+    fetch(base,{cache:'no-store'})
       .then(function(r){return r.json();})
       .then(function(j){
         var res=(j&&j.quoteResponse&&j.quoteResponse.result)||[];
-        if(!res.length){if(next)next();return;}
-        var m={},session='regular';
+        if(!res.length){if(onFail)onFail();return;}
+        var m={},label='';
         res.forEach(function(r){
-          var bp=bestPrice(r);
-          if(bp){m[r.symbol]=bp.p;if(bp.session!=='regular')session=bp.session;}
+          if(r.marketState==='PRE'&&r.preMarketPrice){m[r.symbol]=r.preMarketPrice;label='pre-market';}
+          else if((r.marketState==='POST'||r.marketState==='POSTPOST')&&r.postMarketPrice){m[r.symbol]=r.postMarketPrice;label='after-hours';}
+          else if(r.regularMarketPrice)m[r.symbol]=r.regularMarketPrice;
         });
-        apply(m,session);
-      }).catch(function(){if(next)next();});
+        var sgt=new Date(new Date().getTime()+8*3600000);
+        var ts=String(sgt.getUTCHours()).padStart(2,'0')+':'+String(sgt.getUTCMinutes()).padStart(2,'0')+' SGT';
+        applyPrices(m,label,'prices live · '+ts);
+      }).catch(function(){if(onFail)onFail();});
   }
   function fetchPrices(){
-    var base='https://query1.finance.yahoo.com/v7/finance/quote?symbols='+tickers.join(',');
-    var proxy='https://api.allorigins.win/raw?url='+encodeURIComponent(base);
-    go(proxy,function(){go(base,function(){
-      var b=d.getElementById('live-price-badge');
-      if(b){b.textContent='prices unavailable';b.style.color='#8b949e';}
-    });});
+    fetchFromJson(function(){
+      fetchFromYahoo(function(){
+        var b=d.getElementById('live-price-badge');
+        if(b){b.textContent='prices unavailable';b.style.color='#8b949e';}
+      });
+    });
   }
   function delay(){
     var et=new Date(new Date().getTime()-4*3600000);
