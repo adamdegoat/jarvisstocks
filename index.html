@@ -9,7 +9,13 @@
   function fmt(v){if(typeof v!=='number'||isNaN(v))return '—';return(v>=0?'+':'')+v.toFixed(2)+'%';}
   function clr(v){if(typeof v!=='number')return '#8b949e';return v>0?'#3fb950':v<0?'#f85149':'#8b949e';}
   function set(id,t,c){var e=d.getElementById(id);if(!e)return;e.textContent=t;if(c)e.style.color=c;}
-  function apply(pm){
+  function bestPrice(r){
+    if(r.marketState==='PRE'&&r.preMarketPrice)return {p:r.preMarketPrice,session:'pre-market'};
+    if((r.marketState==='POST'||r.marketState==='POSTPOST')&&r.postMarketPrice)return {p:r.postMarketPrice,session:'after-hours'};
+    if(r.regularMarketPrice)return {p:r.regularMarketPrice,session:'regular'};
+    return null;
+  }
+  function apply(pm,session){
     if(!pm)return;
     var unreal=0;
     pos.forEach(function(p){
@@ -28,8 +34,9 @@
     set('live-unrealized',fmt(unreal),clr(unreal));
     var sgt=new Date(new Date().getTime()+8*3600000);
     var ts=String(sgt.getUTCHours()).padStart(2,'0')+':'+String(sgt.getUTCMinutes()).padStart(2,'0')+' SGT';
+    var label=session&&session!=='regular'?' ('+session+')':'';
     var b=d.getElementById('live-price-badge');
-    if(b){b.textContent='⚡ prices live · '+ts;b.style.color='#3fb950';}
+    if(b){b.textContent='⚡ prices live'+label+' · '+ts;b.style.color='#3fb950';}
   }
   function go(url,next){
     fetch(url,{cache:'no-store'})
@@ -37,8 +44,12 @@
       .then(function(j){
         var res=(j&&j.quoteResponse&&j.quoteResponse.result)||[];
         if(!res.length){if(next)next();return;}
-        var m={};res.forEach(function(r){if(r.regularMarketPrice)m[r.symbol]=r.regularMarketPrice;});
-        apply(m);
+        var m={},session='regular';
+        res.forEach(function(r){
+          var bp=bestPrice(r);
+          if(bp){m[r.symbol]=bp.p;if(bp.session!=='regular')session=bp.session;}
+        });
+        apply(m,session);
       }).catch(function(){if(next)next();});
   }
   function fetchPrices(){
@@ -52,7 +63,7 @@
   function delay(){
     var et=new Date(new Date().getTime()-4*3600000);
     var mins=et.getUTCHours()*60+et.getUTCMinutes(),dow=et.getUTCDay();
-    return(dow>=1&&dow<=5&&mins>=570&&mins<960)?60000:300000;
+    return(dow>=1&&dow<=5&&mins>=240&&mins<1200)?60000:300000;
   }
   function sched(){setTimeout(function(){fetchPrices();sched();},delay());}
   fetchPrices();sched();
